@@ -1,4 +1,4 @@
-#include "llama-context.h"
+﻿#include "llama-context.h"
 
 #include "ggml.h"
 #include "llama-arch.h"
@@ -1375,10 +1375,7 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         //LLAMA_LOG_INFO("graph set inputs time: %.3f ms\n", (ggml_time_us() - t_start_us)/1000.0);
     }
 
-    const int64_t ornith_graph_t0 = ggml_time_us();
-const auto status = graph_compute(res->get_gf(), ubatch.n_tokens > 1);
-const int64_t ornith_graph_us = ggml_time_us() - ornith_graph_t0;
-    
+    const auto status = graph_compute(res->get_gf(), ubatch.n_tokens > 1);
     if (status != GGML_STATUS_SUCCESS) {
         LLAMA_LOG_ERROR("%s: failed to compute graph, compute status: %d\n", __func__, status);
         ret = status;
@@ -1386,27 +1383,8 @@ const int64_t ornith_graph_us = ggml_time_us() - ornith_graph_t0;
     }
 
     // compute is async: update() may overwrite tiering buffers the graph is still reading
-    const int64_t ornith_sync_t0 = ggml_time_us();
     ggml_backend_sched_synchronize(sched.get());
-    const int64_t ornith_sync_us = ggml_time_us() - ornith_sync_t0;
-
-    const int64_t ornith_update_t0 = ggml_time_us();
     llama_expert_tier::update();
-    const int64_t ornith_update_us = ggml_time_us() - ornith_update_t0;
-
-    if (ubatch.n_tokens <= 16) {
-        static uint64_t ornith_phase_n = 0;
-        const uint64_t n = ++ornith_phase_n;
-        if (n <= 10 || (n % 100) == 0) {
-            fprintf(stderr,
-                "ORNITH_PHASE n=%llu graph=%.3f ms sync=%.3f ms update=%.3f ms total=%.3f ms\n",
-                (unsigned long long)n,
-                (double)ornith_graph_us / 1000.0,
-                (double)ornith_sync_us / 1000.0,
-                (double)ornith_update_us / 1000.0,
-                (double)(ornith_graph_us + ornith_sync_us + ornith_update_us) / 1000.0);
-        }
-    }
 
     ret = GGML_STATUS_SUCCESS;
 
@@ -2480,8 +2458,12 @@ ggml_status llama_context::graph_compute(
     for (const auto & set_n_threads_fn : set_n_threads_fns) {
         set_n_threads_fn.second(set_n_threads_fn.first, n_threads);
     }
-    ggml_status status = ggml_backend_sched_graph_compute_async(sched.get(), gf);
-    
+
+    const int64_t ornith_graph_t0 = ggml_time_us();
+        auto status = ggml_backend_sched_graph_compute_async(sched.get(), gf);
+        const int64_t ornith_graph_us = ggml_time_us() - ornith_graph_t0;
+
+        fprintf(stderr, "ORNITH_GRAPH %.3f ms\n", (double) ornith_graph_us / 1000.0);
     if (status != GGML_STATUS_SUCCESS) {
         LLAMA_LOG_ERROR("%s: ggml_backend_sched_graph_compute_async failed with error %d\n", __func__, status);
     }

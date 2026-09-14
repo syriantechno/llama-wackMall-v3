@@ -1276,28 +1276,6 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
 
             const int node_backend_id = tensor_backend_id(node);
 
-// ORNITH_MUL_CPU_DIAG:
-// Measurement only. We only want to know WHY the MoE MUL
-// nodes are assigned to CPU. Do not alter backend assignment here.
-if (node->op == GGML_OP_MUL && node_backend_id == 0) {
-    static int ornith_mul_diag_count = 0;
-
-    if (ornith_mul_diag_count < 12) {
-        ++ornith_mul_diag_count;
-
-        fprintf(stderr,
-            "ORNITH_MUL_CPU_DIAG #%d node=%d type=%d src0_op=%d src0_backend=%d src1_op=%d src1_backend=%d\n",
-            ornith_mul_diag_count,
-            i,
-            (int) node->type,
-            node->src[0] ? (int) node->src[0]->op : -1,
-            node->src[0] ? tensor_backend_id(node->src[0]) : -1,
-            node->src[1] ? (int) node->src[1]->op : -1,
-            node->src[1] ? tensor_backend_id(node->src[1]) : -1
-        );
-    }
-}
-
             GGML_ASSERT(node_backend_id != -1); // all nodes should be assigned by now, this can happen if there is no CPU fallback
 
             // check if we should start a new split based on the sources of the current node
@@ -1351,7 +1329,17 @@ if (node->op == GGML_OP_MUL && node_backend_id == 0) {
                         node_backend_id != cur_backend_id
                             ? "backend-change"
                             : "input-or-weight";
-}
+
+                    fprintf(stderr,
+                        "ORNITH_SPLIT split=%d node=%d op=%s old_backend=%d new_backend=%d reason=%s inputs=%d\n",
+                        i_split,
+                        i,
+                        ggml_op_name(node->op),
+                        cur_backend_id,
+                        node_backend_id,
+                        ornith_reason,
+                        split->n_inputs);
+                }
                 split->i_end = i;
                 i_split++;
                 if (i_split >= sched->splits_capacity) {
@@ -1636,9 +1624,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     const int64_t n_expert   = node->op == GGML_OP_MUL_MAT_ID ? input->ne[2] : input->ne[1];
                     const size_t expert_size = node->op == GGML_OP_MUL_MAT_ID ? input->nb[2] : input->nb[1];
 
-                    const int64_t tier_sync_t0 = ggml_time_us();
                     ggml_backend_synchronize(input_backend);
-                    const int64_t tier_sync_us = ggml_time_us() - tier_sync_t0;
 
                     // get the ids
                     ggml_tensor * ids_tensor = node->src[2];
@@ -1656,11 +1642,8 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
 
                     if (ids_tensor != prev_ids_tensor) {
                         ids.resize(ggml_nbytes(ids_tensor) / sizeof(int32_t));
-                        const int64_t ids_get_t0 = ggml_time_us();
                         ggml_backend_tensor_get_async(ids_backend, ids_tensor, ids.data(), 0, ggml_nbytes(ids_tensor));
                         ggml_backend_synchronize(ids_backend);
-                        const int64_t ids_get_us = ggml_time_us() - ids_get_t0;
-                        if (ids_get_us > 2000 || tier_sync_us > 2000) fprintf(stderr, "SCHED_TIER_SYNC input=%.3f ms ids=%.3f ms\n", tier_sync_us/1000.0, ids_get_us/1000.0);
 
                         // find the used experts
                         used_ids.clear();
@@ -1718,9 +1701,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     // try async copy, but if not possible, we can still use a sync copy without synchronizing the dst backend, since we handle the synchronization here with multiple copies and events
                     // TODO: add public function to facilitate this, since applications do not have direct access to the backend interface
                     if (!split_backend->iface.cpy_tensor_async || !split_backend->iface.cpy_tensor_async(input_backend, split_backend, input, input_cpy)) {
-                        const int64_t tier_sync_t0 = ggml_time_us();
-                    ggml_backend_synchronize(input_backend);
-                    const int64_t tier_sync_us = ggml_time_us() - tier_sync_t0;
+                        ggml_backend_synchronize(input_backend);
                         if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
                             ggml_backend_event_synchronize(sched->events[split_backend_id][sched->cur_copy]);
                         } else {

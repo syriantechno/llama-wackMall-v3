@@ -809,8 +809,8 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
         if (params.n_parallel < 0) {
             params.n_parallel = 1;
         }
-        params.n_batch = 16384;
-        params.n_ubatch = 2048;
+        params.n_batch = 256;
+        params.n_ubatch = 256;
         params.kv_unified = true;
         params.no_kv_offload = false;
     }

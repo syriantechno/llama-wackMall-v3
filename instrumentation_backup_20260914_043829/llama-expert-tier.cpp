@@ -1295,7 +1295,8 @@ void update() {
     g_steps++;
     for (auto & L : g_layers) {
         g_pool_fill_budget = 16 << 20;
-
+        
+        // MEASURE_ONLY_POOL: instrumentation only; no pool logic changes.
         const uint64_t measure_fills_before = g_pool_fills;
         const uint64_t measure_fetch_before = g_fetch_us;
         const int64_t measure_t0 = ggml_time_us();

@@ -300,10 +300,6 @@ static uint64_t g_pool_fills = 0, g_pool_evictions = 0;
 static uint64_t g_pool_hits = 0, g_pool_cold = 0;
 
 static uint64_t g_fetch_us = 0;   // cumulative wall time in pool_fill() memcpy
-static uint64_t g_runtime_fill_us = 0;
-static uint64_t g_runtime_fill_bytes = 0;
-static uint64_t g_runtime_fills = 0;
-static bool g_runtime_measure = false;
 static uint64_t g_steps = 0;      // update() calls (= graph computes)
 static FILE *   g_route_log = nullptr; // actual-routing trace (co-opened with pred log)
 
@@ -505,13 +501,6 @@ static uint64_t stage_word(int il, int64_t e, uint64_t st) {
 }
 
 static const char * stage_fetch(const void * key, int64_t e, const char * fallback) {
-#if defined(_WIN32)
-    // Never perform synchronous file I/O on the Windows MoE decode path.
-    // mmap/RAM remains the fallback source.
-    (void) key;
-    (void) e;
-    return fallback;
-#endif
     auto it = g_stage_ix.find(key);
     if (it == g_stage_ix.end()) {
         return fallback;
@@ -866,48 +855,20 @@ static void pool_fill(layer_tier & L, int k, int e) {
     if (!L.pool_slot_state[k].compare_exchange_strong(free_state, 3, std::memory_order_acquire)) {
         return;
     }
-
     const int64_t t0 = ggml_time_us();
-    size_t copied = 0;
-
     for (auto & kv : L.ws) {
         store & st = *kv.second;
         const size_t slice = ggml_nbytes(kv.first)/L.n_expert;
         const char * src = (const char *) kv.first->data + slice*e;
-
         memcpy(L.pool + (size_t) k*L.pool_slot_bytes + st.pool_off, src, slice);
-        copied += slice;
-
         if (st.poolable) {
             tier_madvise(src, slice, true);
         }
     }
-
-    const uint64_t us = (uint64_t)(ggml_time_us() - t0);
-
-    g_fetch_us += us;
-
-    if (g_runtime_measure) {
-        g_runtime_fill_us += us;
-        g_runtime_fill_bytes += copied;
-        g_runtime_fills++;
-
-        if (g_runtime_fills <= 32) {
-            TIER_LOG(
-                "RUNTIME_FILL #%llu layer=%d expert=%d %.2f MiB %.3f ms\n",
-                (unsigned long long) g_runtime_fills,
-                L.il,
-                e,
-                (double) copied / (1024.0 * 1024.0),
-                (double) us / 1000.0
-            );
-        }
-    }
-
+    g_fetch_us += (uint64_t)(ggml_time_us() - t0);
     L.pool_slot_expert[k] = e;
     L.pool_lut[e] = k;
     L.pool_dwell[k] = 0;
-
     pool_publish(L, e);
     g_pool_fills++;
 }
@@ -1290,30 +1251,11 @@ static void dump_stats() {
 }
 
 void update() {
-    g_runtime_measure = true;
     g_pred_step.fetch_add(1, std::memory_order_relaxed);
     g_steps++;
     for (auto & L : g_layers) {
         g_pool_fill_budget = 16 << 20;
-
-        const uint64_t measure_fills_before = g_pool_fills;
-        const uint64_t measure_fetch_before = g_fetch_us;
-        const int64_t measure_t0 = ggml_time_us();
-maybe_update(L);
-        const uint64_t measure_fills_after = g_pool_fills;
-        const uint64_t measure_fetch_after = g_fetch_us;
-        const uint64_t measure_us = (uint64_t)(ggml_time_us() - measure_t0);
-
-        if (measure_fills_after != measure_fills_before) {
-            TIER_LOG(
-                "MEASURE_ONLY_POOL layer=%d fills=%llu fetch=%.3f ms update=%.3f ms slot=%.2f MiB\n",
-                L.il,
-                (unsigned long long)(measure_fills_after - measure_fills_before),
-                (double)(measure_fetch_after - measure_fetch_before) / 1000.0,
-                (double)measure_us / 1000.0,
-                (double)L.pool_slot_bytes / (1024.0 * 1024.0)
-            );
-        }
+        maybe_update(L);
     }
 }
 
@@ -1495,7 +1437,7 @@ void init(const llama_model & model) {
 
     // Reserve 512 MB for the CUDA runtime, display, alignment and the graph
     // capture buffers that allocate after this sizing (300 MB let capture OOM)
-    const size_t safety_buffer = 256ULL * 1024 * 1024;
+    const size_t safety_buffer = 512ULL * 1024 * 1024;
     size_t free_vram = 0, total_vram = 0;
     ggml_backend_dev_memory(dev, &free_vram, &total_vram);
     const size_t usable_vram = (free_vram > safety_buffer) ? (free_vram - safety_buffer) : 0;
@@ -1603,7 +1545,7 @@ void init(const llama_model & model) {
             s.counts = ggml_new_tensor_1d(g_ctx_cpu, GGML_TYPE_I32, n_expert + 1);
             s.il      = il;
             s.is_down = (w == l.ffn_down_exps);
-            s.poolable    = w->data != nullptr;
+            s.poolable    = w->data && model.weights_discardable(w->data);
             s.discardable = g_madvise && s.poolable;
             s.ptrs = g_pool_bytes > 0 ? ggml_new_tensor_1d(g_ctx_cpu, GGML_TYPE_I64, n_expert) : nullptr;
 

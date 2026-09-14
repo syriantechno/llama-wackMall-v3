@@ -3868,6 +3868,7 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
 
 static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph, const bool use_cuda_graph, const bool cuda_graph_update_required, const void * graph_key) {
     bool graph_evaluated_or_captured = false;
+    const int64_t ornith_cuda_graph_t0 = ggml_time_us();
 
     // flag used to determine whether it is an integrated_gpu
     const bool integrated            = ggml_cuda_info().devices[cuda_ctx->device].integrated;
@@ -4072,7 +4073,48 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
             ggml_cuda_graph_update_executable(cuda_ctx, graph_key);
         }
         // Launch graph
+        static uint64_t ornith_gpu_measure_calls = 0;
+        static cudaEvent_t ornith_gpu_start = nullptr;
+        static cudaEvent_t ornith_gpu_end   = nullptr;
+
+        const uint64_t ornith_gpu_call = ++ornith_gpu_measure_calls;
+        const bool ornith_measure_gpu = (ornith_gpu_call % 100) == 0;
+
+        if (ornith_measure_gpu) {
+            if (ornith_gpu_start == nullptr) {
+                CUDA_CHECK(cudaEventCreate(&ornith_gpu_start));
+                CUDA_CHECK(cudaEventCreate(&ornith_gpu_end));
+            }
+            CUDA_CHECK(cudaEventRecord(ornith_gpu_start, cuda_ctx->stream()));
+        }
+
         CUDA_CHECK(cudaGraphLaunch(graph->instance, cuda_ctx->stream()));
+
+        if (ornith_measure_gpu) {
+            CUDA_CHECK(cudaEventRecord(ornith_gpu_end, cuda_ctx->stream()));
+            CUDA_CHECK(cudaEventSynchronize(ornith_gpu_end));
+
+            float ornith_gpu_ms = 0.0f;
+            CUDA_CHECK(cudaEventElapsedTime(
+                &ornith_gpu_ms,
+                ornith_gpu_start,
+                ornith_gpu_end));
+
+            fprintf(stderr,
+                "ORNITH_GPU_GRAPH call=%llu gpu=%.3f ms\n",
+                (unsigned long long) ornith_gpu_call,
+                ornith_gpu_ms);
+        }
+        const double ornith_cuda_graph_ms = (ggml_time_us() - ornith_cuda_graph_t0) / 1000.0;
+        static uint64_t ornith_cuda_graph_calls = 0;
+        if (++ornith_cuda_graph_calls <= 10 || (ornith_cuda_graph_calls % 100) == 0) {
+            fprintf(stderr,
+                "ORNITH_CUDA_GRAPH call=%llu use=%d update=%d cpu=%.3f ms\n",
+                (unsigned long long) ornith_cuda_graph_calls,
+                (int) use_cuda_graph,
+                (int) cuda_graph_update_required,
+                ornith_cuda_graph_ms);
+        }
 #else
         GGML_UNUSED(graph_key);
         graph_evaluated_or_captured = true;

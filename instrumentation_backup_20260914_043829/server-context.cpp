@@ -1,4 +1,4 @@
-#include "server-context.h"
+﻿#include "server-context.h"
 #include "server-chat.h"
 #include "server-common.h"
 #include "server-http.h"
@@ -367,7 +367,7 @@ struct server_slot {
 
     // if the context does not have a memory module then all embeddings have to be computed within a single ubatch
     // also we cannot split if the pooling would require any past tokens
-    // (MTP supports splitting — uses task->need_embd() not need_embd())
+    // (MTP supports splitting â€” uses task->need_embd() not need_embd())
     bool can_split() const {
         GGML_ASSERT(task);
 
@@ -3595,6 +3595,8 @@ private:
 
         const int64_t ornith_decode_us = ggml_time_us() - ornith_decode_t0;
 
+
+        // ORNITH_DECODE_INSTRUMENT: measurement only; no decode logic changes.
 
         if (batch_view.n_tokens <= 16) {
 

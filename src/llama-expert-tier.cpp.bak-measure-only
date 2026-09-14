@@ -1295,25 +1295,7 @@ void update() {
     g_steps++;
     for (auto & L : g_layers) {
         g_pool_fill_budget = 16 << 20;
-
-        const uint64_t measure_fills_before = g_pool_fills;
-        const uint64_t measure_fetch_before = g_fetch_us;
-        const int64_t measure_t0 = ggml_time_us();
-maybe_update(L);
-        const uint64_t measure_fills_after = g_pool_fills;
-        const uint64_t measure_fetch_after = g_fetch_us;
-        const uint64_t measure_us = (uint64_t)(ggml_time_us() - measure_t0);
-
-        if (measure_fills_after != measure_fills_before) {
-            TIER_LOG(
-                "MEASURE_ONLY_POOL layer=%d fills=%llu fetch=%.3f ms update=%.3f ms slot=%.2f MiB\n",
-                L.il,
-                (unsigned long long)(measure_fills_after - measure_fills_before),
-                (double)(measure_fetch_after - measure_fetch_before) / 1000.0,
-                (double)measure_us / 1000.0,
-                (double)L.pool_slot_bytes / (1024.0 * 1024.0)
-            );
-        }
+        maybe_update(L);
     }
 }
 
