@@ -3596,28 +3596,6 @@ private:
         const int64_t ornith_decode_us = ggml_time_us() - ornith_decode_t0;
 
 
-        if (batch_view.n_tokens <= 16) {
-
-            static uint64_t ornith_decode_calls = 0;
-
-            const uint64_t ornith_n = ++ornith_decode_calls;
-
-            if (ornith_n <= 32 || (ornith_n % 100) == 0) {
-
-                fprintf(stderr,
-
-                    "ORNITH_DECODE_INSTRUMENT call=%llu tokens=%u decode=%.3f ms\n",
-
-                    (unsigned long long) ornith_n,
-
-                    batch_view.n_tokens,
-
-                    (double) ornith_decode_us / 1000.0);
-
-            }
-
-        }
-
         metrics.on_decoded(slots);
 
         if (ret != 0) {

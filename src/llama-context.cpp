@@ -1394,20 +1394,6 @@ const int64_t ornith_graph_us = ggml_time_us() - ornith_graph_t0;
     llama_expert_tier::update();
     const int64_t ornith_update_us = ggml_time_us() - ornith_update_t0;
 
-    if (ubatch.n_tokens <= 16) {
-        static uint64_t ornith_phase_n = 0;
-        const uint64_t n = ++ornith_phase_n;
-        if (n <= 10 || (n % 100) == 0) {
-            fprintf(stderr,
-                "ORNITH_PHASE n=%llu graph=%.3f ms sync=%.3f ms update=%.3f ms total=%.3f ms\n",
-                (unsigned long long)n,
-                (double)ornith_graph_us / 1000.0,
-                (double)ornith_sync_us / 1000.0,
-                (double)ornith_update_us / 1000.0,
-                (double)(ornith_graph_us + ornith_sync_us + ornith_update_us) / 1000.0);
-        }
-    }
-
     ret = GGML_STATUS_SUCCESS;
 
     return res;

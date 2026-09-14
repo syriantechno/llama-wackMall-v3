@@ -1276,28 +1276,6 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
 
             const int node_backend_id = tensor_backend_id(node);
 
-// ORNITH_MUL_CPU_DIAG:
-// Measurement only. We only want to know WHY the MoE MUL
-// nodes are assigned to CPU. Do not alter backend assignment here.
-if (node->op == GGML_OP_MUL && node_backend_id == 0) {
-    static int ornith_mul_diag_count = 0;
-
-    if (ornith_mul_diag_count < 12) {
-        ++ornith_mul_diag_count;
-
-        fprintf(stderr,
-            "ORNITH_MUL_CPU_DIAG #%d node=%d type=%d src0_op=%d src0_backend=%d src1_op=%d src1_backend=%d\n",
-            ornith_mul_diag_count,
-            i,
-            (int) node->type,
-            node->src[0] ? (int) node->src[0]->op : -1,
-            node->src[0] ? tensor_backend_id(node->src[0]) : -1,
-            node->src[1] ? (int) node->src[1]->op : -1,
-            node->src[1] ? tensor_backend_id(node->src[1]) : -1
-        );
-    }
-}
-
             GGML_ASSERT(node_backend_id != -1); // all nodes should be assigned by now, this can happen if there is no CPU fallback
 
             // check if we should start a new split based on the sources of the current node
