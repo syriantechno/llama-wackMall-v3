@@ -300,6 +300,123 @@ static uint64_t g_pool_fills = 0, g_pool_evictions = 0;
 static uint64_t g_pool_hits = 0, g_pool_cold = 0;
 
 static uint64_t g_fetch_us = 0;   // cumulative wall time in pool_fill() memcpy
+
+// ??? QUANT ??? ?????? ????? ????? ??? ?????? ???
+struct quant_stats_t {
+    uint64_t steps_total = 0;
+    uint64_t pool_fill_count = 0;
+    uint64_t pool_fill_us = 0;
+    uint64_t pool_fill_bytes = 0;
+    uint64_t pool_fill_by_layer[64] = {0};
+    uint64_t pool_fill_bytes_by_layer[64] = {0};
+    uint64_t pool_evict_count = 0;
+    uint64_t repin_count = 0;
+    uint64_t graph_us_total = 0;
+    uint64_t sync_us_total = 0;
+    uint64_t update_us_total = 0;
+    // prefill
+    uint64_t prefill_calls = 0;
+    uint64_t prefill_tokens = 0;
+    uint64_t prefill_us = 0;
+    // decode
+    uint64_t decode_calls = 0;
+    uint64_t decode_tokens = 0;
+    uint64_t decode_us = 0;
+};
+static quant_stats_t g_q;
+
+void quant_add_graph(uint64_t us)  { g_q.graph_us_total  += us; }
+void quant_add_sync (uint64_t us)  { g_q.sync_us_total   += us; }
+void quant_add_update(uint64_t us){ g_q.update_us_total += us; }
+void quant_step()                  { g_q.steps_total++; }
+void quant_prefill(uint64_t tokens, uint64_t us) { g_q.prefill_calls++; g_q.prefill_tokens += tokens; g_q.prefill_us += us; }
+void quant_decode (uint64_t tokens, uint64_t us) { g_q.decode_calls++;  g_q.decode_tokens  += tokens; g_q.decode_us  += us; }
+
+void quant_report() {
+    fprintf(stderr, "\n");
+    fprintf(stderr, "???????????????????????????????????????????????????????????????\n");
+    fprintf(stderr, "  QUANT REPORT (printed at exit)\n");
+    fprintf(stderr, "???????????????????????????????????????????????????????????????\n");
+
+    // 1) ???
+    fprintf(stderr, "[1] STEPS\n");
+    fprintf(stderr, "    total = %llu\n", (unsigned long long) g_q.steps_total);
+    if (g_q.steps_total) {
+        fprintf(stderr, "    graph  avg = %.2f ms/step\n", (double) g_q.graph_us_total  / g_q.steps_total / 1000.0);
+        fprintf(stderr, "    sync   avg = %.3f ms/step\n", (double) g_q.sync_us_total   / g_q.steps_total / 1000.0);
+        fprintf(stderr, "    update avg = %.3f ms/step\n", (double) g_q.update_us_total / g_q.steps_total / 1000.0);
+    }
+
+    // 2) pool_fill
+    fprintf(stderr, "\n[2] POOL_FILL\n");
+    fprintf(stderr, "    count  = %llu\n", (unsigned long long) g_q.pool_fill_count);
+    fprintf(stderr, "    bytes  = %llu (%.2f GiB)\n",
+            (unsigned long long) g_q.pool_fill_bytes,
+            (double) g_q.pool_fill_bytes / (1024.0*1024.0*1024.0));
+    fprintf(stderr, "    time   = %llu us (%.3f s)\n",
+            (unsigned long long) g_q.pool_fill_us,
+            (double) g_q.pool_fill_us / 1000000.0);
+    if (g_q.pool_fill_count) {
+        fprintf(stderr, "    avg    = %.2f us/fill\n",
+                (double) g_q.pool_fill_us / g_q.pool_fill_count);
+        double mbps = (double) g_q.pool_fill_bytes / ((double) g_q.pool_fill_us);
+        fprintf(stderr, "    thrpt  = %.0f MiB/s\n", mbps);
+    }
+    if (g_q.steps_total && g_q.pool_fill_count) {
+        fprintf(stderr, "    per_step fills   = %.2f\n",
+                (double) g_q.pool_fill_count / g_q.steps_total);
+        fprintf(stderr, "    per_step time    = %.3f ms\n",
+                (double) g_q.pool_fill_us / g_q.steps_total / 1000.0);
+        fprintf(stderr, "    per_step bytes   = %.2f MiB\n",
+                (double) g_q.pool_fill_bytes / g_q.steps_total / (1024.0*1024.0));
+    }
+
+    // 3) ????? ??? ??????
+    fprintf(stderr, "\n[3] POOL_FILL BY LAYER (top 10 hot layers)\n");
+    {
+        // ???? ?? ??????? ???? ???? fills
+        for (int i = 0; i < 64; i++) {
+            if (g_q.pool_fill_by_layer[i] > 0) {
+                fprintf(stderr, "    L%-2d  fills=%-6llu  bytes=%8.2f MiB\n",
+                        i,
+                        (unsigned long long) g_q.pool_fill_by_layer[i],
+                        (double) g_q.pool_fill_bytes_by_layer[i] / (1024.0*1024.0));
+            }
+        }
+    }
+
+    // 4) evictions
+    fprintf(stderr, "\n[4] EVICTIONS / REPINS\n");
+    fprintf(stderr, "    evictions = %llu\n", (unsigned long long) g_q.pool_evict_count);
+    fprintf(stderr, "    repins    = %llu\n", (unsigned long long) g_q.repin_count);
+
+    // 5) prefill
+    fprintf(stderr, "\n[5] PREFILL\n");
+    fprintf(stderr, "    calls  = %llu\n", (unsigned long long) g_q.prefill_calls);
+    fprintf(stderr, "    tokens = %llu\n", (unsigned long long) g_q.prefill_tokens);
+    fprintf(stderr, "    time   = %llu us (%.2f s)\n",
+            (unsigned long long) g_q.prefill_us,
+            (double) g_q.prefill_us / 1000000.0);
+    if (g_q.prefill_us) {
+        fprintf(stderr, "    tok/s  = %.2f\n",
+                (double) g_q.prefill_tokens * 1000000.0 / g_q.prefill_us);
+    }
+
+    // 6) decode
+    fprintf(stderr, "\n[6] DECODE\n");
+    fprintf(stderr, "    calls  = %llu\n", (unsigned long long) g_q.decode_calls);
+    fprintf(stderr, "    tokens = %llu\n", (unsigned long long) g_q.decode_tokens);
+    fprintf(stderr, "    time   = %llu us (%.2f s)\n",
+            (unsigned long long) g_q.decode_us,
+            (double) g_q.decode_us / 1000000.0);
+    if (g_q.decode_us) {
+        fprintf(stderr, "    tok/s  = %.2f\n",
+                (double) g_q.decode_tokens * 1000000.0 / g_q.decode_us);
+    }
+
+    fprintf(stderr, "???????????????????????????????????????????????????????????????\n\n");
+}
+// ???????????????????????????????????????????????????????????????????
 static uint64_t g_runtime_fill_us = 0;
 static uint64_t g_runtime_fill_bytes = 0;
 static uint64_t g_runtime_fills = 0;
@@ -886,6 +1003,13 @@ static void pool_fill(layer_tier & L, int k, int e) {
     const uint64_t us = (uint64_t)(ggml_time_us() - t0);
 
     g_fetch_us += us;
+    g_q.pool_fill_count++;
+    g_q.pool_fill_us += us;
+    g_q.pool_fill_bytes += (uint64_t) copied;
+    if (L.il < 64) {
+        g_q.pool_fill_by_layer[L.il]++;
+        g_q.pool_fill_bytes_by_layer[L.il] += (uint64_t) copied;
+    }
 
     if (g_runtime_measure) {
         g_runtime_fill_us += us;
@@ -923,7 +1047,8 @@ static void pool_evict(layer_tier & L, int k) {
     L.pool_dwell[k] = 0;
     pool_publish(L, e); // back to the mmap fallback
     g_pool_evictions++;
-}
+
+    g_q.pool_evict_count++;}
 
 static bool parse_heat_csv(const std::string & path, int n_layer,
         std::vector<std::vector<std::pair<int64_t, int32_t>>> & heat) {
@@ -1123,6 +1248,7 @@ static void maybe_update(layer_tier & L) {
             L.slot_expert[si] = ec;
             L.dwell[si] = 0;
             g_repins++;
+                g_q.repin_count++;
         }
     }
 
@@ -1167,6 +1293,9 @@ static void maybe_update(layer_tier & L) {
 }
 
 static void dump_stats() {
+    // ??? QUANT ??? ????? ??????? ??? ??????
+    quant_report();
+
     if (const char * p = getenv("LLAMA_EXPERT_STATS")) {
         FILE * f = strcmp(p, "1") ? fopen(p, "w") : stderr;
         if (f) {

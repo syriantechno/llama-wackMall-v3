@@ -1,5 +1,17 @@
 #include "llama-context.h"
 
+// ??? QUANT ??? externs
+namespace llama_expert_tier {
+    void quant_add_graph(uint64_t us);
+    void quant_add_sync (uint64_t us);
+    void quant_add_update(uint64_t us);
+    void quant_step();
+    void quant_prefill(uint64_t tokens, uint64_t us);
+    void quant_decode (uint64_t tokens, uint64_t us);
+}
+// ???????????????????????????????????????????????????????????????
+
+
 #include "ggml.h"
 #include "llama-arch.h"
 #include "llama-graph.h"
@@ -1393,6 +1405,13 @@ const int64_t ornith_graph_us = ggml_time_us() - ornith_graph_t0;
     const int64_t ornith_update_t0 = ggml_time_us();
     llama_expert_tier::update();
     const int64_t ornith_update_us = ggml_time_us() - ornith_update_t0;
+    {
+        // QUANT: ???? update()
+        llama_expert_tier::quant_add_graph ((uint64_t) ornith_graph_us);
+        llama_expert_tier::quant_add_sync  ((uint64_t) ornith_sync_us);
+        llama_expert_tier::quant_add_update((uint64_t) ornith_update_us);
+        llama_expert_tier::quant_step();
+    }
 
     ret = GGML_STATUS_SUCCESS;
 
